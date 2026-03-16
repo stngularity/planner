@@ -1,23 +1,31 @@
 """The executer for commands (in CMD, for example: pla run proxy)"""
 
 import io
+import os
 import socket
 import struct
+import ctypes
 from typing import Final, Literal
 
 import click
-from rich.console import Console
-from rich.theme import Theme
 
 ENCODING: Final[str] = "utf-8"
-
-CONSOLE: Final[Console] = Console(theme=Theme(inherit=False))
 
 HOST: Final[str] = "127.0.0.1"
 PORT: Final[int] = 14561
 PORT_LIMIT: Final[int] = PORT + 10
 
 PROCESS_TYPES: Final[list[str]] = ["database", "web", "background"]
+
+#region enable colors in terminal (Windows)
+if os.name == "nt":
+    hStdOut = ctypes.windll.kernel32.GetStdHandle(-11)
+    dwMode = ctypes.c_uint32()
+    ctypes.windll.kernel32.GetConsoleMode(hStdOut, ctypes.byref(dwMode))
+    ctypes.windll.kernel32.SetConsoleMode(hStdOut, dwMode.value | 0x0004)
+#endregion
+
+R: Final[str] = "\x1B[0m"
 
 
 def find_background_port() -> tuple[int, int]:
@@ -78,14 +86,11 @@ def cli(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     
-    CONSOLE.print(f"A simple utility for managing simple services")
-    print("-"*45 + "\n")
-    print()
+    print(f"A simple utility for managing simple services\n{'-'*45}\n")
     for name, command in [(k, v) for k, v in cli.commands.items() if not k.startswith("_")]:
-        CONSOLE.print(f"   [yellow]{name}[/]{' ' * (20-len(name))}{(command.help or '').lower()}")
+        print(f"   \x1B[33m{name}{R}{' ' * (20-len(name))}{(command.help or '').lower()}")
 
-    print("\n" + "-"*48)
-    CONSOLE.print("Made with ❤️ and 🍵 by [yellow]stngularity[/] for everyone!")
+    print(f"\n{'-'*48}\nMade with ❤️ and 🍵 by \x1B[33mstngularity{R} for everyone!")
 
 # LIST [BG: 0x11 LIST SERVICES]
 # out:  int size, list of [int type, string name, string command, string cwd, string description, bool autorun, int pid]
@@ -110,14 +115,14 @@ def list_command() -> None:
         size -= 1
 
     if len(services) == 0:
-        return CONSOLE.print("[red]err:[/] there are no registered services")
+        return print(f"\x1B[31merr:{R} there are no registered services")
 
     print("list of services:")
     for service in services:
-        color = "[red]" if service["pid"] == 0 else "[green]"
-        pid = f" [bright_black]({service['pid']})[/]" if service["pid"] != 0 else ""
-        description = service["description"] or "[bright_black italic]no description[/]"
-        CONSOLE.print(f"{color}* {service['name']}:[/] {description}{pid}")
+        color = "\x1B[31m" if service["pid"] == 0 else "\x1B[32m"
+        pid = f" \x1B[90m({service['pid']}){R}" if service["pid"] != 0 else ""
+        description = service["description"] or f"\x1B[3;90mno description{R}"
+        print(f"{color}* {service['name']}:{R} {description}{pid}")
 
 # REGISTER [BG: 0x01 REGISTER]
 # in:   int type, string name, string command, string cwd, string description, bool autorun
@@ -148,16 +153,16 @@ def register_command(
 
     result = send_command(0x01, data)[0]
     if result == 0:
-        return CONSOLE.print("[red]err:[/] a service with this name already exists")
+        return print(f"\x1B[31merr:{R} a service with this name already exists")
     
     if result != 1:
-        return CONSOLE.print("[red]err:[/] unknown error")
+        return print(f"\x1B[31merr:{R} unknown error")
 
-    CONSOLE.print(f"[blue]info:[/] the [blue]{type.lower()}[/] service [blue]{name}[/] has been registered")
-    CONSOLE.print(f"[blue]info:[/] launching with the command [blue]{command}[/]")
+    print(f"\x1B[34minfo:{R} the \x1B[34m{type.lower()}{R} service \x1B[34m{name}{R} has been registered")
+    print(f"\x1B[34minfo:{R} launching with the command \x1B[34m{command}{R}")
 
-    color = "[green]" if autorun else "[red]"
-    CONSOLE.print(f"[blue]info:[/] {color}will{'[/]' if autorun else ' not[/]'} start up with the system")
+    color = "\x1B[32m" if autorun else "\x1B[31m"
+    print(f"\x1B[34minfo:{R} {color}will{R if autorun else ' not' + R} start up with the system")
 
 # UNREGISTER [BG: 0x02 UNREGISTER]
 # in:   string name
@@ -169,12 +174,12 @@ def remove_command(name: str) -> None:
     response = send_command(0x02, name.encode(ENCODING) + b"\0")
     result, pid = struct.unpack(">BI", response)
     if result == 0:
-        return CONSOLE.print("[red]err:[/] there is no utility with this name")
+        return print(f"\x1B[31merr:{R} there is no utility with this name")
     
     if result == 1:
-        CONSOLE.print(f"[blue]info:[/] the service process [bright_black]({pid})[/] has been stopped")
+        print(f"\x1B[34minfo:{R} the service process \x1B[90m({pid}){R} has been stopped")
     
-    CONSOLE.print(f"[blue]info:[/] the service has been successfully unregistered")
+    print(f"\x1B[34minfo:{R} the service has been successfully unregistered")
 
 # RUN [BG: 0x12 RUN SERVICE]
 # in:   string name
@@ -186,15 +191,15 @@ def run_command(name: str) -> None:
     response = send_command(0x12, name.encode(ENCODING) + b"\0")
     result, pid = struct.unpack(">BI", response)
     if result == 0:
-        return CONSOLE.print("[red]err:[/] there is no service with that name")
+        return print(f"\x1B[31merr:{R} there is no service with that name")
     
     if result == 1:
-        return CONSOLE.print(f"[red]err:[/] the service is already running on [red]{pid} pid[/]")
+        return print(f"\x1B[31merr:{R} the service is already running on \x1B[31m{pid} pid{R}")
 
     if result != 2:
-        return CONSOLE.print("[red]err:[/] unknown error")
+        return print(f"\x1B[31merr:{R} unknown error")
 
-    CONSOLE.print(f"[blue]info:[/] the service has been successfully started on [blue]{pid} pid[/]")
+    print(f"\x1B[34minfo:{R} the service has been successfully started on \x1B[34m{pid} pid{R}")
 
 # STOP [BG: 0x13 STOP SERVICE]
 # in:   string name
@@ -206,15 +211,15 @@ def stop_command(name: str) -> None:
     response = send_command(0x13, name.encode(ENCODING) + b"\0")
     result, pid = struct.unpack(">BI", response)
     if result == 0:
-        return CONSOLE.print("[red]err:[/] there is no service with that name")
+        return print(f"\x1B[31merr:{R} there is no service with that name")
 
     if result == 1:
-        return CONSOLE.print(f"[red]err:[/] the service hasn't been launched yet")
+        return print(f"\x1B[31merr:{R} the service hasn't been launched yet")
 
     if result != 2:
-        return CONSOLE.print("[red]err:[/] unknown error")
+        return print(f"\x1B[31merr:{R} unknown error")
 
-    CONSOLE.print(f"[blue]info:[/] the service has been successfully stopped [bright_black]({pid} pid)[/]")
+    print(f"\x1B[34minfo:{R} the service has been successfully stopped \x1B[90m({pid} pid){R}")
 
 # RESTART [BG: 0x14 RESTART SERVICE]
 # in:   string name
@@ -226,15 +231,15 @@ def restart_command(name: str) -> None:
     response = send_command(0x14, name.encode(ENCODING) + b"\0")
     result, pid1, pid2 = struct.unpack(">BII", response)
     if result == 0:
-        return CONSOLE.print("[red]err:[/] there is no service with that name")
+        return print(f"\x1B[31merr:{R} there is no service with that name")
 
     if result == 1:
-        return CONSOLE.print(f"[red]err:[/] the service isn't running")
+        return print(f"\x1B[31merr:{R} the service isn't running")
 
     if result != 2:
-        return CONSOLE.print("[red]err:[/] unknown error")
+        return print(f"\x1B[31merr:{R} unknown error")
     
-    CONSOLE.print(f"[blue]info:[/] the service has been successfully restarted [bright_black]({pid1} -> {pid2})[/]")
+    print(f"\x1B[34minfo:{R} the service has been successfully restarted \x1B[90m({pid1} -> {pid2}){R}")
 
 # GET [BG: 0x10 GET SERVICE]
 # out:   int result, 
@@ -253,43 +258,42 @@ def inspect_command(name: str | None) -> None:
         length = 80
 
         print()
-        CONSOLE.print(f"  [yellow]background process inspection results[/]")
-        CONSOLE.print(f"  [yellow]{'-'*(length)}[/]")
-        CONSOLE.print(f"  [yellow]status {'.'*(length-len(status)-8)}[/] {status}")
-        CONSOLE.print(f"  [yellow]pid {'.'*(length-len(str(pid))-5)}[/] {str(pid).lower()}")
-        CONSOLE.print(f"  [yellow]port {'.'*(length-len(str(port))-6)}[/] {str(port).lower()}")
+        print(f"  \x1B[33mbackground process inspection results{R}")
+        print(f"  \x1B[33m{'-'*(length)}{R}")
+        print(f"  \x1B[33mstatus {'.'*(length-len(status)-8)}{R} {status}")
+        print(f"  \x1B[33mpid {'.'*(length-len(str(pid))-5)}{R} {str(pid).lower()}")
+        print(f"  \x1B[33mport {'.'*(length-len(str(port))-6)}{R} {str(port).lower()}")
         print()
         
         return
 
     response = send_command(0x10, name.encode(ENCODING) + b"\0")
     if response[0] == 0:
-        return CONSOLE.print("[red]err:[/] there is no service with that name")
+        return print(f"\x1B[31merr:{R} there is no service with that name")
 
     data = io.BytesIO(response)
     rtype = struct.unpack(">B", data.read(1))[0]
     type = PROCESS_TYPES[rtype-1]
     name = read_string(data)
     command = read_string(data)
-    cwd = read_string(data) or "[bright_black italic]no cwd[/]"
-    description = read_string(data) or "[bright_black italic]no description[/]"
+    cwd = read_string(data) or "[bright_black italic]no cwd{R}"
+    description = read_string(data) or "[bright_black italic]no description{R}"
     rautorun, pid = struct.unpack(">?I", data.read(5))
     autorun = "yes" if rautorun else "no"
 
     length = max([len(type), len(name), len(command), len(cwd), len(description), 56])+24
 
     print()
-    CONSOLE.print(f"  [yellow]service inspection results[/]")
-    CONSOLE.print(f"  [yellow]{'-'*(length)}[/]")
-    CONSOLE.print(f"  [yellow]type {'.'*(length-len(type)-6)}[/] {type}")
-    CONSOLE.print(f"  [yellow]name {'.'*(length-len(name)-6)}[/] {name}")
-    CONSOLE.print(f"  [yellow]description {'.'*(length-len(description)-13)}[/] {description}")
-    CONSOLE.print(f"  [yellow]working directory {'.'*(length-len(cwd)-19)}[/] {cwd}")
-    CONSOLE.print(f"  [yellow]run command {'.'*(length-len(command)-13)}[/] {command}")
-    CONSOLE.print(f"  [yellow]autorun {'.'*(length-len(autorun)-9)}[/] {autorun}")
+    print(f"  \x1B[33mservice inspection results{R}")
+    print(f"  \x1B[33m{'-'*(length)}{R}")
+    print(f"  \x1B[33mtype {'.'*(length-len(type)-6)}{R} {type}")
+    print(f"  \x1B[33mname {'.'*(length-len(name)-6)}{R} {name}")
+    print(f"  \x1B[33mdescription {'.'*(length-len(description)-13)}{R} {description}")
+    print(f"  \x1B[33mworking directory {'.'*(length-len(cwd)-19)}{R} {cwd}")
+    print(f"  \x1B[33mrun command {'.'*(length-len(command)-13)}{R} {command}")
+    print(f"  \x1B[33mautorun {'.'*(length-len(autorun)-9)}{R} {autorun}")
     if pid != 0:
-        print()
-        CONSOLE.print(f"  currently running on [yellow]{pid} pid[/]")
+        print(f"\n  currently running on \x1B[33m{pid} pid{R}")
 
     print()
 
@@ -297,4 +301,4 @@ if __name__ == "__main__":
     try:
         cli()
     except socket.error:
-        CONSOLE.print("[red]err:[/] unable to find the background process!")
+        print(f"\x1B[31merr:{R} unable to find the background process!")

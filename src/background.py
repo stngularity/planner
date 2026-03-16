@@ -4,20 +4,17 @@ import os
 import io
 import sys
 import time
+import json
 import shlex
 import errno
 import signal
 import socket
 import struct
+import ctypes
 from pathlib import Path
 from threading import Thread
 from subprocess import Popen, DEVNULL
 from typing import Any, Final, Optional
-
-if os.name == "nt":
-    import ctypes
-
-import simdjson
 
 STATE_AUDIT_COOLDOWN: Final[int] = 5  # in seconds
 STOP_SERVICE_TIMEOUT: Final[int] = 5  # in seconds
@@ -68,28 +65,28 @@ def add_service(
     """Adds the specified service to the list (registers it)."""
     create_if_not_exists()
     with open(PROC_FILE, "r", encoding=ENCODING) as reader:
-        services = simdjson.loads(reader.read())
+        services = json.loads(reader.read())
 
     services.append({"type": type, "name": name, "command": command, "cwd": cwd,
                      "description": description, "autorun": autorun})
 
     with open(PROC_FILE, "w", encoding=ENCODING) as file:
-        file.write(simdjson.dumps(services, ensure_ascii=False))
+        file.write(json.dumps(services, ensure_ascii=False))
 
 def remove_service(name: str) -> None:
     """Removes the specified service from the list (unregisters it)."""
     create_if_not_exists()
     with open(PROC_FILE, "r", encoding=ENCODING) as reader:
-        services = simdjson.loads(reader.read())
+        services = json.loads(reader.read())
 
     with open(PROC_FILE, "w", encoding=ENCODING) as file:
-        file.write(simdjson.dumps([s for s in services if s["name"] != name], ensure_ascii=False))
+        file.write(json.dumps([s for s in services if s["name"] != name], ensure_ascii=False))
 
 def get_service(name: str) -> Optional[dict[str, Any]]:
     """Receives service data for its launch."""
     create_if_not_exists()
     with open(PROC_FILE, "r", encoding=ENCODING) as reader:
-        services = simdjson.loads(reader.read())
+        services = json.loads(reader.read())
     
     service = [s for s in services if s["name"] == name]
     return service[0] if len(service) > 0 else None
@@ -98,7 +95,7 @@ def list_services() -> list[dict[str, Any]]:
     """Lists all registered services."""
     create_if_not_exists()
     with open(PROC_FILE, "r", encoding=ENCODING) as reader:
-        services = simdjson.loads(reader.read())
+        services = json.loads(reader.read())
 
     return services
 
