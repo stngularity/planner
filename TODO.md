@@ -1,0 +1,6 @@
+- [ ] Add the ability to read the output of processes running under planner
+- [ ] Add prerun and postrun options
+- [ ] Rewrite the background command processing (execution queue)
+- [ ] Standardize the background and CLI communication packets into a single format
+- [ ] Write README.md
+- [ ] Add autoinstall command
