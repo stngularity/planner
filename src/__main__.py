@@ -78,12 +78,13 @@ def cli(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     
-    CONSOLE.print(f"A simple utility for managing simple services{' '*30}◼ ◼ ◼")
-    print("-"*80 + "\n")
+    CONSOLE.print(f"A simple utility for managing simple services")
+    print("-"*45 + "\n")
+    print()
     for name, command in [(k, v) for k, v in cli.commands.items() if not k.startswith("_")]:
         CONSOLE.print(f"   [yellow]{name}[/]{' ' * (20-len(name))}{(command.help or '').lower()}")
 
-    print("\n" + "-"*80)
+    print("\n" + "-"*48)
     CONSOLE.print("Made with ❤️ and 🍵 by [yellow]stngularity[/] for everyone!")
 
 # LIST [BG: 0x11 LIST SERVICES]
