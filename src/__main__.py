@@ -276,7 +276,7 @@ def inspect_command(name: str | None) -> None:
     rautorun, pid = struct.unpack(">?I", data.read(5))
     autorun = "yes" if rautorun else "no"
 
-    length = max(max([len(x) for x in [type, name, command, cwd, description]])+24, 80)
+    length = max([len(type), len(name), len(command), len(cwd), len(description), 56])+24
 
     print()
     CONSOLE.print(f"  [yellow]service inspection results[/]")
