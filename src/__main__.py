@@ -1,21 +1,17 @@
 """The executer for commands (in CMD, for example: pla run proxy)"""
 
-import io
 import os
 import socket
 import struct
 import ctypes
-from typing import Final, Literal
 
 import click
 
-ENCODING: Final[str] = "utf-8"
+from general import *
 
-HOST: Final[str] = "127.0.0.1"
-PORT: Final[int] = 14561
-PORT_LIMIT: Final[int] = PORT + 10
+PORT_WAIR_TIMEOUT: int = 1  # in seconds
 
-PROCESS_TYPES: Final[list[str]] = ["database", "web", "background"]
+PROCESS_TYPES: list[str] = ["database", "net", "background"]
 
 #region enable colors in terminal (Windows)
 if os.name == "nt":
@@ -25,18 +21,18 @@ if os.name == "nt":
     ctypes.windll.kernel32.SetConsoleMode(hStdOut, dwMode.value | 0x0004)
 #endregion
 
-R: Final[str] = "\x1B[0m"
+R: str = "\x1B[0m"
 
 
 def find_background_port() -> tuple[int, int]:
     """Attempts to find the port on which the planner background process is running."""
     output = PORT
     while True:
-        if output > PORT_LIMIT:
+        if output > PORT + PORT_OFFSET_LIMIT:
             raise socket.error
 
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.settimeout(1)
+        client.settimeout(PORT_WAIR_TIMEOUT)
         if client.connect_ex((HOST, output)) != 0:
             output += 1
             continue
@@ -59,7 +55,7 @@ def find_background_port() -> tuple[int, int]:
 
     return output, pid
 
-def send_command(packet_type: int, data: bytes = b"") -> bytes:
+def send_command(packet_type: int, data: bytes = b"") -> Buffer:
     """Sends a command to a background process."""
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     client.settimeout(5)
@@ -69,15 +65,7 @@ def send_command(packet_type: int, data: bytes = b"") -> bytes:
     while (chunk := client.recv(1024)) != b"":
         response += chunk
 
-    return response
-
-def read_string(buffer: io.BytesIO) -> str:
-    """Reads the string until the end."""
-    output = b""
-    while (char := buffer.read(1)) != b"\x00":
-        output += char
-    
-    return output.decode(ENCODING)
+    return Buffer(response)
 
 @click.group(invoke_without_command=True)
 @click.pass_context
@@ -97,32 +85,27 @@ def cli(ctx: click.Context) -> None:
 @cli.command("list")
 def list_command() -> None:
     """List of all registered services"""
-    services = []
+    desc_placeholder = f"\x1B[3;90mno description{R}"
 
-    data = io.BytesIO(send_command(0x11))
+    data = send_command(0x11)
     size = struct.unpack(">I", data.read(4))[0]
-    while size > 0:
-        type = struct.unpack(">B", data.read(1))[0]
-        name = read_string(data)
-        command = read_string(data)
-        cwd = read_string(data)
-        description = read_string(data)
-        autorun, pid = struct.unpack(">?I", data.read(5))
-
-        services.append({"type": type, "name": name, "command": command, "cwd": cwd,
-                         "description": description, "autorun": autorun, "pid": pid})
-        
-        size -= 1
-
-    if len(services) == 0:
+    if size == 0:
         return print(f"\x1B[31merr:{R} there are no registered services")
 
     print("list of services:")
-    for service in services:
-        color = "\x1B[31m" if service["pid"] == 0 else "\x1B[32m"
-        pid = f" \x1B[90m({service['pid']}){R}" if service["pid"] != 0 else ""
-        description = service["description"] or f"\x1B[3;90mno description{R}"
-        print(f"{color}* {service['name']}:{R} {description}{pid}")
+    while size > 0:
+        data.skip(1)
+        name = data.read_string()
+        data.skip_string()
+        data.skip_string()
+        description = data.read_string()
+        _, pid = struct.unpack(">?I", data.read(5))
+        
+        color = "\x1B[31m" if pid == 0 else "\x1B[32m"
+        pid = f" \x1B[90m({pid}){R}" if pid != 0 else ""
+        print(f"{color}* {name}:{R} {description or desc_placeholder}{pid}")
+        
+        size -= 1
 
 # REGISTER [BG: 0x01 REGISTER]
 # in:   int type, string name, string command, string cwd, string description, bool autorun
@@ -140,7 +123,7 @@ def register_command(
     command: str,
     cwd: str | None,
     description: str | None,
-    type: Literal["database", "web", "background"],  # 1, 2, 3
+    type: str,
     autorun: bool
 ) -> None:
     """Registers the service using the specified data"""
@@ -171,7 +154,7 @@ def register_command(
 @click.argument("name", type=str)
 def remove_command(name: str) -> None:
     """Unregisters the service with the specified name"""
-    response = send_command(0x02, name.encode(ENCODING) + b"\0")
+    response = send_command(0x02, name.encode(ENCODING) + b"\0").read(5)
     result, pid = struct.unpack(">BI", response)
     if result == 0:
         return print(f"\x1B[31merr:{R} there is no utility with this name")
@@ -188,7 +171,7 @@ def remove_command(name: str) -> None:
 @click.argument("name", type=str)
 def run_command(name: str) -> None:
     """Starts the service with the specified name"""
-    response = send_command(0x12, name.encode(ENCODING) + b"\0")
+    response = send_command(0x12, name.encode(ENCODING) + b"\0").read(5)
     result, pid = struct.unpack(">BI", response)
     if result == 0:
         return print(f"\x1B[31merr:{R} there is no service with that name")
@@ -208,7 +191,7 @@ def run_command(name: str) -> None:
 @click.argument("name", type=str)
 def stop_command(name: str) -> None:
     """Stops the service with the specified name"""
-    response = send_command(0x13, name.encode(ENCODING) + b"\0")
+    response = send_command(0x13, name.encode(ENCODING) + b"\0").read(5)
     result, pid = struct.unpack(">BI", response)
     if result == 0:
         return print(f"\x1B[31merr:{R} there is no service with that name")
@@ -228,7 +211,7 @@ def stop_command(name: str) -> None:
 @click.argument("name", type=str)
 def restart_command(name: str) -> None:
     """Restarts the utility with the specified name"""
-    response = send_command(0x14, name.encode(ENCODING) + b"\0")
+    response = send_command(0x14, name.encode(ENCODING) + b"\0").read(9)
     result, pid1, pid2 = struct.unpack(">BII", response)
     if result == 0:
         return print(f"\x1B[31merr:{R} there is no service with that name")
@@ -271,14 +254,14 @@ def inspect_command(name: str | None) -> None:
     if response[0] == 0:
         return print(f"\x1B[31merr:{R} there is no service with that name")
 
-    data = io.BytesIO(response)
-    rtype = struct.unpack(">B", data.read(1))[0]
+    rtype = struct.unpack(">B", response.read(1))[0]
     type = PROCESS_TYPES[rtype-1]
-    name = read_string(data)
-    command = read_string(data)
-    cwd = read_string(data) or "[bright_black italic]no cwd{R}"
-    description = read_string(data) or "[bright_black italic]no description{R}"
-    rautorun, pid = struct.unpack(">?I", data.read(5))
+
+    name = response.read_string()
+    command = response.read_string()
+    cwd = response.read_string() or f"\x1B[3;90mno cwd{R}"
+    description = response.read_string() or f"\x1B[3;90mno description{R}"
+    rautorun, pid = struct.unpack(">?I", response.read(5))
     autorun = "yes" if rautorun else "no"
 
     length = max([len(type), len(name), len(command), len(cwd), len(description), 56])+24

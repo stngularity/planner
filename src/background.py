@@ -1,54 +1,46 @@
 """The background part of `planner`"""
 
 import os
-import io
-import sys
 import time
 import json
 import shlex
-import errno
-import signal
 import socket
 import struct
 import ctypes
-from pathlib import Path
 from threading import Thread
 from subprocess import Popen, DEVNULL
-from typing import Any, Final, Optional
+from typing import Any
 
-STATE_AUDIT_COOLDOWN: Final[int] = 5  # in seconds
-STOP_SERVICE_TIMEOUT: Final[int] = 5  # in seconds
-ENCODING: Final[str] = "utf-8"
+from general import *
 
-PROC_FILE: Final[Path] = Path(__file__).parent.parent / "proc"
+STATE_AUDIT_COOLDOWN: int = 5  # in seconds
+STOP_SERVICE_TIMEOUT: int = 5  # in seconds
 
-HOST: Final[str] = "127.0.0.1"
-PORT: Final[int] = 14561  # I don't remember why I chose this particular port.
-PORT_LIMIT: Final[int] = PORT + 10
+PROC_FILE: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "proc")
 
-popens: dict[str, Popen] = {}  # key - SID (service id); value - popen
+popens: dict[str, Popen] = {}  # key - SID (service id or name); value - popen
 
 
 def stop_service(sid: str) -> None:
     """Attempts to stop the process with the specified ID."""
     popen = popens[sid]
-    popen.__dict__["_kill"] = True
-    os.kill(popen.pid, signal.SIGTERM)
+    popen.__dict__["_kill"] = True  # to prevent the process object created by the RESTART command from being deleted
+    os.kill(popen.pid, 15)  # SIGTERM
 
     time.sleep(STOP_SERVICE_TIMEOUT)
     if os.name == "nt":
-        hProcess = ctypes.windll.kernel32.OpenProcess(0x0001, False, popen.pid)
+        hProcess = ctypes.windll.kernel32.OpenProcess(1, False, popen.pid)
         ctypes.windll.kernel32.TerminateProcess(hProcess, 0)
         ctypes.windll.kernel32.CloseHandle(hProcess)
     else:
-        os.kill(popen.pid, signal.SIGKILL)
+        os.kill(popen.pid, 9)  # SIGKILL
 
     if popens[sid].__dict__.get("_kill", False):
         popens.pop(sid)
 
 def create_if_not_exists() -> None:
     """Creates a file for recording services if it does not exist."""
-    if PROC_FILE.exists():
+    if os.path.exists(PROC_FILE):
         return
     
     with open(PROC_FILE, "x", encoding=ENCODING) as writer:
@@ -58,8 +50,8 @@ def add_service(
     type: str,
     name: str,
     command: list[str],
-    cwd: Optional[str],
-    description: Optional[str],
+    cwd: str | None,
+    description: str | None,
     autorun: bool
 ) -> None:
     """Adds the specified service to the list (registers it)."""
@@ -82,7 +74,7 @@ def remove_service(name: str) -> None:
     with open(PROC_FILE, "w", encoding=ENCODING) as file:
         file.write(json.dumps([s for s in services if s["name"] != name], ensure_ascii=False))
 
-def get_service(name: str) -> Optional[dict[str, Any]]:
+def get_service(name: str) -> dict[str, Any] | None:
     """Receives service data for its launch."""
     create_if_not_exists()
     with open(PROC_FILE, "r", encoding=ENCODING) as reader:
@@ -98,14 +90,6 @@ def list_services() -> list[dict[str, Any]]:
         services = json.loads(reader.read())
 
     return services
-
-def read_string(buffer: io.BytesIO) -> str:
-    """Reads the string until the end."""
-    output = b""
-    while (char := buffer.read(1)) != b"\x00":
-        output += char
-    
-    return output.decode(ENCODING)
 
 def encode_service(service: dict[str, Any]) -> bytes:
     """Encodes the :param:`service` as bytes."""
@@ -132,7 +116,7 @@ def run_service(service: dict[str, Any]) -> Popen:
     popens[service["name"]] = popen
     return popen
 
-def handle(packet_type: int, data: io.BytesIO) -> Optional[bytes]:
+def handle(packet_type: int, data: Buffer) -> bytes | None:
     """Handles and attempts to execute the received command."""
     if packet_type == 0x00:  # 0x00 INFO
         # Why 4 bytes for PID?
@@ -146,10 +130,10 @@ def handle(packet_type: int, data: io.BytesIO) -> Optional[bytes]:
     
     if packet_type == 0x01:  # 0x01 REGISTER
         type = struct.unpack(">B", data.read(1))[0]  # type MUST BE greater than 0
-        name = read_string(data)
-        command = shlex.split(read_string(data))
-        cwd = None if (value := read_string(data)) == "" else os.path.abspath(value)
-        description = read_string(data) or None
+        name = data.read_string()
+        command = shlex.split(data.read_string())
+        cwd = None if (value := data.read_string()) == "" else os.path.abspath(value)
+        description = data.read_string() or None
         autorun = struct.unpack(">?", data.read(1))[0]
 
         service = get_service(name)
@@ -160,7 +144,7 @@ def handle(packet_type: int, data: io.BytesIO) -> Optional[bytes]:
         return struct.pack(">B", 1)
     
     if packet_type == 0x02:  # 0x02 UNREGISTER
-        name = read_string(data)
+        name = data.read_string()
         service = get_service(name)
         if service is None:
             return struct.pack(">BI", 0, 0)
@@ -175,7 +159,7 @@ def handle(packet_type: int, data: io.BytesIO) -> Optional[bytes]:
         return struct.pack(">BI", 2, 0)
 
     if packet_type == 0x10:  # 0x10 GET SERVICE
-        name = read_string(data)
+        name = data.read_string()
         service = get_service(name)
         if service is None:
             return struct.pack(">B", 0)
@@ -191,7 +175,7 @@ def handle(packet_type: int, data: io.BytesIO) -> Optional[bytes]:
         return response
 
     if packet_type == 0x12:  # 0x12 RUN SERVICE
-        name = read_string(data)
+        name = data.read_string()
         service = get_service(name)
         if service is None:
             return struct.pack(">BI", 0, 0)  # service isn't exists
@@ -204,7 +188,7 @@ def handle(packet_type: int, data: io.BytesIO) -> Optional[bytes]:
         return struct.pack(">BI", 2, popen.pid)
     
     if packet_type == 0x13:  # 0x13 STOP SERVICE
-        name = read_string(data)
+        name = data.read_string()
         service = get_service(name)
         if service is None:
             return struct.pack(">BI", 0, 0)  # service isn't exists
@@ -217,7 +201,7 @@ def handle(packet_type: int, data: io.BytesIO) -> Optional[bytes]:
         return struct.pack(">BI", 2, pid)
     
     if packet_type == 0x14:  # 0x14 RESTART SERVICE
-        name = read_string(data)
+        name = data.read_string()
         service = get_service(name)
         if service is None:
             return struct.pack(">BII", 0, 0, 0)  # service isn't exists
@@ -253,16 +237,14 @@ def autorun() -> None:
 def try_to_bind(server: socket.socket, *, port: int = PORT) -> None:
     """Attempts to bind the specified :param:`server` to the constant host
     and port."""
-    if port > PORT_LIMIT:
-        sys.exit(0)
+    if port > PORT + PORT_OFFSET_LIMIT:
+        exit(0)
 
     try:
         server.bind((HOST, port))
-    except socket.error as error:
-        if error.errno == errno.EADDRINUSE:   # if the address with that port is already taken by someone else,
-            try_to_bind(server, port=port+1)  # then try to start on the next port.
-        
-        raise error
+    except socket.error:
+        # always try to start on the next port.
+        try_to_bind(server, port=port+1)
 
 def serve() -> None:
     """Accepts commands from the CLI and executes them.
@@ -276,7 +258,7 @@ def serve() -> None:
     while True:
         connection, _ = server.accept()
         try:
-            data = io.BytesIO(connection.recv(1024))
+            data = Buffer(connection.recv(1024))
         except:
             continue
         
