@@ -4,8 +4,8 @@
 - [ ] Standardize the background and CLI communication packets into a single format
 - [ ] Write README.md
 - [ ] Add autoinstall command
-- [ ] Make `pysimdjson` an optional dependency
-- [ ] Get rid of the dependency on `click` and `rich`
+- [x] Make `pysimdjson` an optional dependency *(is no longer used at all.)*
+- [x] Get rid of the dependency on `click` and `rich`
 - [ ] Try to reduce the number of standard libraries in `background.py`
 - [ ] Add reference for all commands
 - [ ] Fix ~~my clumsy hands~~ the terrible implementation of command parsing
