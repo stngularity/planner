@@ -7,3 +7,5 @@
 - [ ] Make `pysimdjson` an optional dependency
 - [ ] Get rid of the dependency on `click` and `rich`
 - [ ] Try to reduce the number of standard libraries in `background.py`
+- [ ] Add reference for all commands
+- [ ] Fix ~~my clumsy hands~~ the terrible implementation of command parsing
