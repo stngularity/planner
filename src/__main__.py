@@ -1,11 +1,12 @@
 """The executer for commands (in CMD, for example: pla run proxy)"""
 
 import os
+import re
+import sys
 import socket
 import struct
 import ctypes
-
-import click
+from typing import Any
 
 from general import *
 
@@ -67,22 +68,17 @@ def send_command(packet_type: int, data: bytes = b"") -> Buffer:
 
     return Buffer(response)
 
-@click.group(invoke_without_command=True)
-@click.pass_context
-def cli(ctx: click.Context) -> None:
+def help_command() -> None:
     """A simple utility for managing simple services"""
-    if ctx.invoked_subcommand is not None:
-        return
-    
-    print(f"A simple utility for managing simple services\n{'-'*45}\n")
-    for name, command in [(k, v) for k, v in cli.commands.items() if not k.startswith("_")]:
-        print(f"   \x1B[33m{name}{R}{' ' * (20-len(name))}{(command.help or '').lower()}")
+    print(f"a simple utility for managing simple services\n{'-'*45}\n")
+    for name, command in [(k, v) for k, v in commands.items() if not k.startswith("_")]:
+        description = command.get("description", command["handler"].__doc__).lower()
+        print(f"   \x1B[33m{name}{R}{' ' * (20-len(name))}{description}")
 
-    print(f"\n{'-'*48}\nMade with ❤️ and 🍵 by \x1B[33mstngularity{R} for everyone!")
+    print(f"\n{'-'*48}\nmade with ❤️ and 🍵 by \x1B[33mstngularity{R} for everyone!")
 
 # LIST [BG: 0x11 LIST SERVICES]
 # out:  int size, list of [int type, string name, string command, string cwd, string description, bool autorun, int pid]
-@cli.command("list")
 def list_command() -> None:
     """List of all registered services"""
     desc_placeholder = f"\x1B[3;90mno description{R}"
@@ -110,14 +106,6 @@ def list_command() -> None:
 # REGISTER [BG: 0x01 REGISTER]
 # in:   int type, string name, string command, string cwd, string description, bool autorun
 # out:  int result
-@cli.command("register")
-@click.argument("name", type=str)
-@click.argument("command", type=str)
-@click.option("--cwd", type=str, default=None, help="working folder of the service")
-@click.option("--description", type=str, default=None, help="description of the process")
-@click.option("--type", type=click.Choice(PROCESS_TYPES, case_sensitive=False),
-              default="background", help="service type")
-@click.option("-a", "--autorun", is_flag=True, help="would to run this service together with the system")
 def register_command(
     name: str,
     command: str,
@@ -150,9 +138,7 @@ def register_command(
 # UNREGISTER [BG: 0x02 UNREGISTER]
 # in:   string name
 # out:  int result, int pid
-@cli.command("unregister")
-@click.argument("name", type=str)
-def remove_command(name: str) -> None:
+def unregister_command(name: str) -> None:
     """Unregisters the service with the specified name"""
     response = send_command(0x02, name.encode(ENCODING) + b"\0").read(5)
     result, pid = struct.unpack(">BI", response)
@@ -167,8 +153,6 @@ def remove_command(name: str) -> None:
 # RUN [BG: 0x12 RUN SERVICE]
 # in:   string name
 # out:  int result, int pid
-@cli.command("run")
-@click.argument("name", type=str)
 def run_command(name: str) -> None:
     """Starts the service with the specified name"""
     response = send_command(0x12, name.encode(ENCODING) + b"\0").read(5)
@@ -187,8 +171,6 @@ def run_command(name: str) -> None:
 # STOP [BG: 0x13 STOP SERVICE]
 # in:   string name
 # out:  int result, int pid
-@cli.command("stop")
-@click.argument("name", type=str)
 def stop_command(name: str) -> None:
     """Stops the service with the specified name"""
     response = send_command(0x13, name.encode(ENCODING) + b"\0").read(5)
@@ -207,8 +189,6 @@ def stop_command(name: str) -> None:
 # RESTART [BG: 0x14 RESTART SERVICE]
 # in:   string name
 # out:  int result, int oldPid, int newPid
-@cli.command("restart")
-@click.argument("name", type=str)
 def restart_command(name: str) -> None:
     """Restarts the utility with the specified name"""
     response = send_command(0x14, name.encode(ENCODING) + b"\0").read(9)
@@ -226,8 +206,6 @@ def restart_command(name: str) -> None:
 
 # GET [BG: 0x10 GET SERVICE]
 # out:   int result, 
-@cli.command("inspect")
-@click.argument("name", type=str, default=None, metavar="[service]")
 def inspect_command(name: str | None) -> None:
     """Checks the status of the utility's background process or the specified service"""
     if name is None:
@@ -280,8 +258,168 @@ def inspect_command(name: str | None) -> None:
 
     print()
 
+
+commands = {
+    "help": {
+        "description": "Reference for all planner commands",
+        "handler": help_command
+    },
+    "list": {
+        "handler": list_command
+    },
+    "register": {
+        "handler": register_command,
+        "arguments": [
+            ("name", str, "service name (also known as the service id)"),  # name, type, description, default?
+            ("command", str, "the command that starts the service")
+        ],
+        "options": [
+            ("cwd", str, "working folder of the service"),  # name, type, description, default? (None by default)
+            ("description", str, "description of the process"),
+            ("type", PROCESS_TYPES, "service type", "background")  # type may be list of possible values
+        ],
+        "flags": [
+            ("autorun", ["a"], "would to run this service together with the system")  # name, aliases, description, default? (False by default)
+        ]
+    },
+    "unregister": {
+        "handler": unregister_command,
+        "arguments": [("name", str, "service name (also known as the service id)")]
+    },
+    "run": {
+        "handler": run_command,
+        "arguments": [("name", str, "service name (also known as the service id)")]
+    },
+    "stop": {
+        "handler": stop_command,
+        "arguments": [("name", str, "service name (also known as the service id)")]
+    },
+    "restart": {
+        "handler": restart_command,
+        "arguments": [("name", str, "service name (also known as the service id)")]
+    },
+    "inspect": {
+        "handler": inspect_command,
+        "arguments": [("name", str, "service name (also known as the service id)", None)]
+    }
+}
+
+type_name_map = {
+    str: "string",
+    int: "integer",
+    bool: "boolean"
+}
+
+def build_usage(command: str) -> str:
+    """:class:`str`: Builds usage line for the specified command."""
+    cmd_obj = commands[command]
+    arguments = (""
+                 if (args := cmd_obj.get("arguments")) is None 
+                 else " " + " ".join(f"<{x[0]}>" if len(x) == 3 else f"[{x[0]}]" for x in args))
+    
+    return f"{sys.argv[0]} {command}{arguments}"
+
+def parse_bool(value: str) -> bool:
+    """:class:`bool`: Attempts to convert the specified value to a boolean."""
+    if value.lower() in ["true", "yes", "y"]:
+        return True
+    
+    if value.lower() in ["false", "no", "n"]:
+        return False
+    
+    raise ValueError
+
+def parse_value(value: str, type: type[Any] | Any, name: str) -> Any:
+    """Attempting to process the value of the argument/option."""
+    if isinstance(type, list) and (value.lower() not in type):
+        return print(f"\x1B[31merr:{R} possible values for \x1B[31m{name}:{R} {', '.join(type)}")
+    
+    if isinstance(type, list):
+        return value.lower()
+
+    try:
+        typed_value = parse_bool(value) if issubclass(type, bool) else type(value)
+        return typed_value
+    except ValueError:
+        type_name = type_name_map.get(type, type.__qualname__)
+        return print(f"\x1B[31merr:{R} {name} must be {type_name}")
+
+def main() -> None:
+    """CLI entry point. Processes all arguments and executes the appropriate commands."""
+    command = sys.argv[1:]
+    if (len(command) == 0) or ("-h" in command) or ("--help" in command):
+        return commands["help"]["handler"]()
+    
+    if command[0] not in commands:
+        return print(f"\x1B[31merr:{R} unknown command: {command[0]}")
+    
+    cmd_obj = commands[command[0]]
+    kwargs = {}
+
+    values = command[1:]
+    options = cmd_obj.get("options", [])
+    for option in options:
+        string = f"--{option[0]}"
+        if string not in values:
+            continue
+
+        index = values.index(string)
+        if index == len(values)-1:
+            return print(f"\x1B[31merr:{R} the value of the \x1B[31m{option[0]}{R} option is missing")
+
+        value = values[index+1]
+        if value.startswith("-"):
+            return print(f"\x1B[31merr:{R} the value of the \x1B[31m{option[0]}{R} option is missing")
+        
+        parsed_value = parse_value(re.sub(r"(?<!\\)\\", "", value), option[1], option[0])
+        if value is None:
+            return
+        
+        kwargs[option[0]] = parsed_value
+        values.pop(index+1)
+        values.pop(index)
+    
+    for option in [x for x in options if x[0] not in kwargs]:
+        kwargs[option[0]] = None if len(option) == 3 else option[3]
+
+    flags = cmd_obj.get("flags", [])
+    for flag in flags:
+        for name in [f"-{flag[0]}"] + flag[1]:
+            string = f"-{name}"
+            if string in values:
+                kwargs[flag[0]] = True if len(flag) == 3 else not flag[3]
+                values.remove(string)
+    
+    for flag in [x for x in flags if x[0] not in kwargs]:
+        kwargs[flag[0]] = False if len(flag) == 3 else flag[3]
+    
+    if any(map((lambda x: x.startswith("-")), values)):
+        unknown = [x for x in values if x.startswith("-")][0]
+        return print(f"\x1B[31merr:{R} unknown option or flag: {unknown}")
+
+    arguments = cmd_obj.get("arguments")
+    if (arguments is not None) and (len(command) < len([x for x in arguments if len(x) == 3])+1):
+        return print(f"\x1B[31merr:{R} usage: {build_usage(command[0])}")
+
+    for i, argument in enumerate(arguments or []):
+        try:
+            raw_value = values[i]
+        except IndexError:
+            continue
+
+        value = parse_value(raw_value, argument[1], argument[0])
+        if value is None:
+            return
+        
+        kwargs[argument[0]] = value
+    
+    for argument in [x for x in arguments if x[0] not in kwargs]:
+        kwargs[argument[0]] = argument[3]
+
+    cmd_obj["handler"](**kwargs)
+
 if __name__ == "__main__":
     try:
-        cli()
+        main()
     except socket.error:
         print(f"\x1B[31merr:{R} unable to find the background process!")
